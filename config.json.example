@@ -1,0 +1,9 @@
+{
+  "gemini_api_key": "YOUR_GEMINI_API_KEY",
+  "gemini_model": "gemini-2.5-flash",
+  "spreadsheet_id": "YOUR_SPREADSHEET_ID",
+  "screenshot_dir": "./screenshots",
+  "adb_path": "adb",
+  "wait_seconds": 2,
+  "client_name": "クライアント名"
+}

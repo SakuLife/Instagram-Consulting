@@ -1,0 +1,13 @@
+{
+  "gemini_api_key": "YOUR_GEMINI_API_KEY",
+  "gemini_model": "gemini-2.5-flash",
+  "whisper_model": "large-v3",
+  "whisper_device": "auto",
+  "whisper_compute_type": "auto",
+  "parent_folder_id": "1c8tduVZMFS8UqyPpa8Gc2Yd521zdbP-X",
+  "subfolder_recording": "録音",
+  "subfolder_done": "処理済み",
+  "subfolder_transcript": "文字起こし",
+  "subfolder_output": "出力",
+  "service_account_file": "service_account.json"
+}
