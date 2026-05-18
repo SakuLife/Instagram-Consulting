@@ -238,10 +238,31 @@ class DriveManager:
         print()
 
     def upload_as_doc(self, name, content, folder_id):
+        """テキストファイルをDriveにアップロード（ストレージ節約のためtxt形式）"""
         from googleapiclient.http import MediaInMemoryUpload
-        metadata = {'name': name, 'mimeType': 'application/vnd.google-apps.document', 'parents': [folder_id]}
+        metadata = {
+            'name': name + '.txt',
+            'parents': [folder_id]
+        }
         media = MediaInMemoryUpload(content.encode('utf-8'), mimetype='text/plain')
-        return self.service.files().create(body=metadata, media_body=media, fields='id,webViewLink').execute()
+        file = self.service.files().create(
+            body=metadata, media_body=media, fields='id,webViewLink'
+        ).execute()
+
+        # フォルダオーナーに編集権限を付与
+        try:
+            folder = self.service.files().get(fileId=folder_id, fields='owners').execute()
+            owner_email = folder.get('owners', [{}])[0].get('emailAddress', '')
+            if owner_email:
+                self.service.permissions().create(
+                    fileId=file['id'],
+                    body={'type': 'user', 'role': 'writer', 'emailAddress': owner_email},
+                    sendNotificationEmail=False
+                ).execute()
+        except Exception as e:
+            print(f'  (権限付与スキップ: {e})')
+
+        return file
 
     def move_file(self, file_id, new_folder_id):
         file = self.service.files().get(fileId=file_id, fields='parents').execute()
