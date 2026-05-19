@@ -1,147 +1,209 @@
 """
-Instagram自動データ取得スクリプト
-ADB経由でスマホのInstagramインサイトをスクショ → Gemini Vision APIで数値読み取り → スプシに書き込み
+Instagram インサイト自動取得
+iPhone: pymobiledevice3 でスクショ取得
+Android: ADB でスクショ + 画面操作
+共通: Gemini Vision APIで数値読み取り → Google Sheetsに書き込み
+
+セットアップ:
+  pip install pymobiledevice3 gspread google-auth
 
 使い方:
-1. AndroidスマホをUSB接続、USBデバッグON
-2. config.json にGemini APIキーとスプシIDを設定
-3. python ig_auto_collect.py を実行
+  1. スマホをUSBでPCに接続
+  2. IGアプリでインサイト画面を開く
+  3. python ig_auto_collect.py を実行
 """
 
-import subprocess
 import json
-import time
-import os
 import sys
+import os
+import time
+import subprocess
 import base64
-from datetime import datetime
+import urllib.request
 from pathlib import Path
+from datetime import datetime
 
-# ── 設定ファイル読み込み ──
 CONFIG_FILE = Path(__file__).parent / 'config.json'
 DEFAULT_CONFIG = {
     "gemini_api_key": "YOUR_GEMINI_API_KEY",
-    "gemini_model": "gemini-2.0-flash",
+    "gemini_model": "gemini-2.5-flash",
     "spreadsheet_id": "YOUR_SPREADSHEET_ID",
+    "service_account_file": "service_account.json",
     "screenshot_dir": "./screenshots",
-    "adb_path": "adb",
-    "wait_seconds": 2,
-    "client_name": "石井組",
+    "capture_count": 4,
+    "capture_interval": 3,
+    "client_name": ""
 }
 
 def load_config():
     if not CONFIG_FILE.exists():
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=2)
-        print(f"設定ファイルを作成しました: {CONFIG_FILE}")
-        print("config.json を編集してAPIキーとスプシIDを設定してください。")
+        print(f'設定ファイルを作成: {CONFIG_FILE}')
+        print('config.json を編集してAPIキーとスプシIDを設定してください。')
         sys.exit(1)
-    
     with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
 # ═══════════════════════════════════════════
-# ADB操作
+# デバイス検出
 # ═══════════════════════════════════════════
-class ADBController:
-    def __init__(self, adb_path='adb'):
-        self.adb = adb_path
-    
-    def run(self, *args):
-        cmd = [self.adb] + list(args)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        return result.stdout.strip()
-    
-    def check_device(self):
-        """デバイス接続確認"""
-        output = self.run('devices')
-        lines = output.strip().split('\n')
-        devices = [l for l in lines[1:] if 'device' in l and 'unauthorized' not in l]
-        if not devices:
-            print("❌ Androidデバイスが見つかりません。")
-            print("   - USBケーブルで接続してください")
-            print("   - USBデバッグを有効にしてください")
-            print("   - 「USBデバッグを許可しますか？」のダイアログでOKを押してください")
+def detect_device():
+    """接続されたデバイスを検出（iPhone優先）"""
+    # iPhone検出
+    try:
+        from pymobiledevice3.usbmux import list_devices
+        devices = list_devices()
+        if devices:
+            print(f'📱 iPhone検出: {len(devices)}台')
+            return 'iphone'
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f'  (iPhone検出エラー: {e})')
+
+    # Android検出
+    try:
+        result = subprocess.run(['adb', 'devices'], capture_output=True, text=True, timeout=5)
+        lines = result.stdout.strip().split('\n')[1:]
+        androids = [l for l in lines if 'device' in l and 'unauthorized' not in l]
+        if androids:
+            print(f'🤖 Android検出: {len(androids)}台')
+            return 'android'
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f'  (Android検出エラー: {e})')
+
+    return None
+
+
+# ═══════════════════════════════════════════
+# iPhone スクリーンショット
+# ═══════════════════════════════════════════
+class IPhoneCapture:
+    def __init__(self):
+        self.lockdown = None
+
+    def connect(self):
+        try:
+            from pymobiledevice3.lockdown import create_using_usbmux
+            self.lockdown = create_using_usbmux()
+            name = self.lockdown.display_name
+            print(f'  ✅ iPhone接続: {name}')
+            return True
+        except Exception as e:
+            print(f'  ❌ iPhone接続失敗: {e}')
+            print('  → iPhoneとPCをUSBで接続して「このコンピュータを信頼」をタップしてください')
             return False
-        print(f"✅ デバイス検出: {devices[0].split()[0]}")
-        return True
-    
-    def screenshot(self, local_path):
-        """スクリーンショット取得"""
-        remote_path = '/sdcard/ig_screenshot.png'
-        self.run('shell', 'screencap', '-p', remote_path)
-        self.run('pull', remote_path, local_path)
-        self.run('shell', 'rm', remote_path)
-        return os.path.exists(local_path)
-    
-    def tap(self, x, y):
-        """タップ"""
-        self.run('shell', 'input', 'tap', str(x), str(y))
-        time.sleep(0.5)
-    
-    def swipe(self, x1, y1, x2, y2, duration=300):
-        """スワイプ"""
-        self.run('shell', 'input', 'swipe', str(x1), str(y1), str(x2), str(y2), str(duration))
-        time.sleep(0.5)
-    
+
+    def screenshot(self, save_path):
+        try:
+            from pymobiledevice3.services.screenshot import ScreenshotService
+            screenshot_data = ScreenshotService(lockdown=self.lockdown).take_screenshot()
+            with open(save_path, 'wb') as f:
+                f.write(screenshot_data)
+            print(f'  📸 スクショ保存: {Path(save_path).name}')
+            return True
+        except Exception as e:
+            print(f'  ❌ スクショ失敗: {e}')
+            return False
+
+
+# ═══════════════════════════════════════════
+# Android スクリーンショット + 操作
+# ═══════════════════════════════════════════
+class AndroidCapture:
+    def connect(self):
+        try:
+            result = subprocess.run(['adb', 'devices'], capture_output=True, text=True, timeout=5)
+            lines = result.stdout.strip().split('\n')[1:]
+            devices = [l for l in lines if 'device' in l and 'unauthorized' not in l]
+            if devices:
+                print(f'  ✅ Android接続: {devices[0].split()[0]}')
+                return True
+            else:
+                print('  ❌ Android未検出')
+                print('  → USBデバッグを有効にしてPCと接続してください')
+                return False
+        except FileNotFoundError:
+            print('  ❌ ADBがインストールされていません')
+            print('  → https://developer.android.com/tools/releases/platform-tools')
+            return False
+
+    def screenshot(self, save_path):
+        try:
+            subprocess.run(['adb', 'shell', 'screencap', '-p', '/sdcard/screenshot.png'],
+                         capture_output=True, timeout=10)
+            subprocess.run(['adb', 'pull', '/sdcard/screenshot.png', save_path],
+                         capture_output=True, timeout=10)
+            subprocess.run(['adb', 'shell', 'rm', '/sdcard/screenshot.png'],
+                         capture_output=True, timeout=5)
+            print(f'  📸 スクショ保存: {Path(save_path).name}')
+            return True
+        except Exception as e:
+            print(f'  ❌ スクショ失敗: {e}')
+            return False
+
     def swipe_up(self):
-        """画面を上にスクロール"""
-        self.swipe(540, 1500, 540, 500, 400)
-    
-    def back(self):
-        """戻るボタン"""
-        self.run('shell', 'input', 'keyevent', 'KEYCODE_BACK')
-        time.sleep(0.5)
-    
-    def get_screen_size(self):
-        """画面サイズ取得"""
-        output = self.run('shell', 'wm', 'size')
-        # "Physical size: 1080x2400"
-        match = output.split(':')[-1].strip()
-        w, h = match.split('x')
-        return int(w), int(h)
-    
-    def open_instagram(self):
-        """Instagramアプリを起動"""
-        self.run('shell', 'am', 'start', '-n', 'com.instagram.android/.activity.MainTabActivity')
-        time.sleep(3)
+        """画面を上にスワイプ（スクロール）"""
+        try:
+            subprocess.run(['adb', 'shell', 'input', 'swipe', '540', '1500', '540', '500', '300'],
+                         capture_output=True, timeout=5)
+            time.sleep(1)
+        except Exception:
+            pass
+
+    def tap(self, x, y):
+        """指定座標をタップ"""
+        try:
+            subprocess.run(['adb', 'shell', 'input', 'tap', str(x), str(y)],
+                         capture_output=True, timeout=5)
+            time.sleep(0.5)
+        except Exception:
+            pass
 
 
 # ═══════════════════════════════════════════
-# Gemini Vision API
+# Gemini Vision で画像からデータ読み取り
 # ═══════════════════════════════════════════
-class GeminiVision:
-    def __init__(self, api_key, model='gemini-2.0-flash'):
+class GeminiVisionReader:
+    def __init__(self, api_key, model='gemini-2.5-flash'):
         self.api_key = api_key
         self.model = model
         self.endpoint = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
-    
-    def read_screenshot(self, image_path, prompt):
-        """スクショから情報を読み取る"""
-        import urllib.request
-        
-        with open(image_path, 'rb') as f:
-            image_data = base64.b64encode(f.read()).decode('utf-8')
-        
+
+    def read_insight(self, image_paths, insight_type='post'):
+        """複数のスクショからインサイトデータを読み取り"""
+        print(f'  🔍 Gemini Visionで読み取り中（{len(image_paths)}枚）...')
+
+        # 画像をBase64エンコード
+        parts = []
+        for path in image_paths:
+            with open(path, 'rb') as f:
+                img_data = base64.b64encode(f.read()).decode('utf-8')
+            parts.append({
+                "inlineData": {
+                    "mimeType": "image/png",
+                    "data": img_data
+                }
+            })
+
+        if insight_type == 'post':
+            prompt = self._post_prompt()
+        elif insight_type == 'account':
+            prompt = self._account_prompt()
+        else:
+            prompt = self._post_prompt()
+
+        parts.append({"text": prompt})
+
         payload = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/png",
-                            "data": image_data
-                        }
-                    }
-                ]
-            }],
-            "generationConfig": {
-                "temperature": 0.1,
-                "maxOutputTokens": 2000,
-            }
+            "contents": [{"parts": parts}],
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 4096}
         }
-        
+
         url = f"{self.endpoint}?key={self.api_key}"
         req = urllib.request.Request(
             url,
@@ -149,170 +211,178 @@ class GeminiVision:
             headers={'Content-Type': 'application/json'},
             method='POST'
         )
-        
+
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 result = json.loads(resp.read().decode('utf-8'))
                 if result.get('candidates'):
-                    return result['candidates'][0]['content']['parts'][0]['text']
+                    text = result['candidates'][0]['content']['parts'][0]['text']
+                    return self._parse_json_response(text)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode('utf-8')
+            print(f'  ❌ Gemini APIエラー（{e.code}）: {body[:300]}')
         except Exception as e:
-            print(f"❌ Gemini API エラー: {e}")
-        
+            print(f'  ❌ 読み取りエラー: {e}')
+
         return None
-    
-    def extract_post_insights(self, image_path):
-        """投稿インサイトのスクショから数値を抽出"""
-        prompt = """この画像はInstagramの投稿インサイト画面です。
-以下の情報をJSON形式で抽出してください。数値が見つからない場合はnullにしてください。
 
+    def _post_prompt(self):
+        return """この画像はInstagramの投稿インサイト画面です。
+以下の情報をJSON配列で抽出してください。各投稿ごとに1つのオブジェクトです。
+
+出力形式（JSONのみ、他のテキスト不要）:
+[
+  {
+    "date": "投稿日（YYYY/MM/DD形式）",
+    "type": "リール or フィード or ストーリーズ",
+    "content": "投稿内容の説明（キャプション冒頭など）",
+    "reach": リーチ数（数値）,
+    "plays": 再生数（数値、なければ0）,
+    "likes": いいね数（数値）,
+    "saves": 保存数（数値）,
+    "comments": コメント数（数値）
+  }
+]
+
+読み取れない値は0にしてください。JSONのみ出力、説明文不要。"""
+
+    def _account_prompt(self):
+        return """この画像はInstagramのアカウントインサイト画面です。
+以下の情報をJSONで抽出してください。
+
+出力形式（JSONのみ）:
 {
-  "reach": リーチ数（数値のみ）,
-  "impressions": インプレッション数,
-  "likes": いいね数,
-  "saves": 保存数,
-  "comments": コメント数,
-  "plays": 再生数（リールの場合）,
-  "post_type": "リール" or "フィード" or "ストーリーズ",
-  "post_date": "YYYY/MM/DD形式の投稿日",
-  "caption_preview": "投稿内容の冒頭30文字程度"
+  "month": "対象月（YYYY年M月形式）",
+  "impressions": インプレッション数（数値）,
+  "reach": リーチしたアカウント数（数値）,
+  "follower_reach_pct": フォロワーからの閲覧割合（数値、%なし）,
+  "non_follower_reach_pct": フォロワー外からの閲覧割合（数値、%なし）,
+  "profile_visits": プロフィールアクセス数（数値）,
+  "link_clicks": 外部リンクタップ数（数値）,
+  "followers": フォロワー数（数値）
 }
 
-JSON以外のテキストは出力しないでください。"""
-        
-        result = self.read_screenshot(image_path, prompt)
-        if result:
-            try:
-                # JSON部分を抽出
-                json_str = result.strip()
-                if json_str.startswith('```'):
-                    json_str = json_str.split('\n', 1)[1].rsplit('```', 1)[0]
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                print(f"⚠️ JSON解析失敗: {result[:200]}")
-        return None
-    
-    def extract_account_insights(self, image_path):
-        """アカウント全体のインサイトスクショから数値を抽出"""
-        prompt = """この画像はInstagramのアカウント全体のインサイト画面です。
-以下の情報をJSON形式で抽出してください。見つからない項目はnullにしてください。
+読み取れない値は0にしてください。JSONのみ出力。"""
 
-{
-  "impressions": 閲覧数/インプレッション数,
-  "reach": リーチしたアカウント数,
-  "follower_inside_pct": フォロワーからの閲覧%（数値のみ）,
-  "follower_outside_pct": フォロワー外からの閲覧%（数値のみ）,
-  "profile_visits": プロフィールアクセス/アクティビティ数,
-  "external_link_taps": 外部リンクタップ数,
-  "follower_count": フォロワー数,
-  "period": "集計期間（例: 2/24〜3/25）"
-}
+    def _parse_json_response(self, text):
+        """GeminiレスポンスからJSONを抽出"""
+        text = text.strip()
+        # コードブロック除去
+        if text.startswith('```'):
+            text = text.split('\n', 1)[1] if '\n' in text else text[3:]
+        if text.endswith('```'):
+            text = text[:-3]
+        text = text.strip()
+        if text.startswith('json'):
+            text = text[4:].strip()
 
-JSON以外のテキストは出力しないでください。"""
-        
-        return self.read_screenshot(image_path, prompt)
-    
-    def extract_audience_data(self, image_path):
-        """オーディエンスデータのスクショから情報を抽出"""
-        prompt = """この画像はInstagramのオーディエンス分析画面です。
-以下の情報をJSON形式で抽出してください。見つからない項目はnullにしてください。
-
-{
-  "age_top": "最も多い年齢層（例: 25-34: 33%）",
-  "gender_ratio": "性別比（例: 63:37）",
-  "top_city": "最も多い地域（例: 富士市 9.7%）",
-  "top_country": "最も多い国（例: 日本 98.5%）"
-}
-
-JSON以外のテキストは出力しないでください。"""
-        
-        return self.read_screenshot(image_path, prompt)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            print(f'  ⚠️ JSONパースエラー: {e}')
+            print(f'  レスポンス: {text[:200]}')
+            return None
 
 
 # ═══════════════════════════════════════════
-# Google Sheets書き込み
+# スプレッドシート書き込み
 # ═══════════════════════════════════════════
-class SheetsWriter:
-    def __init__(self, spreadsheet_id):
+class SheetWriter:
+    def __init__(self, spreadsheet_id, service_account_file='service_account.json'):
         self.spreadsheet_id = spreadsheet_id
         self._client = None
-    
+        self._sa_file = service_account_file
+
     @property
     def client(self):
         if self._client is None:
             try:
                 import gspread
                 from google.oauth2.service_account import Credentials
-                
-                scopes = [
-                    'https://www.googleapis.com/auth/spreadsheets',
-                    'https://www.googleapis.com/auth/drive'
-                ]
-                creds = Credentials.from_service_account_file(
-                    'service_account.json', scopes=scopes
-                )
+                scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+                creds = Credentials.from_service_account_file(self._sa_file, scopes=scopes)
                 self._client = gspread.authorize(creds)
             except ImportError:
-                print("❌ gspread がインストールされていません。")
-                print("   pip install gspread google-auth")
-                sys.exit(1)
-            except FileNotFoundError:
-                print("❌ service_account.json が見つかりません。")
-                print("   Google Cloud Console でサービスアカウントキーを作成してください。")
+                print('❌ gspread がインストールされていません')
+                print('   pip install gspread google-auth')
                 sys.exit(1)
         return self._client
-    
-    def write_post_data(self, post_data_list):
-        """投稿データをスプシに書き込み"""
+
+    def write_posts(self, posts):
+        """投稿データを①投稿管理に書き込み"""
         ss = self.client.open_by_key(self.spreadsheet_id)
-        ws = ss.worksheet('① 投稿管理')
-        
-        # 最終行を取得
-        existing = ws.get_all_values()
+        sheet = ss.worksheet('① 投稿管理')
+
+        # 既存データの最終行を取得
+        existing = sheet.get_all_values()
         next_row = len(existing) + 1
-        
-        for data in post_data_list:
-            row = [
-                data.get('post_date', ''),
-                data.get('post_type', ''),
-                data.get('caption_preview', ''),
-                '',  # URL（手動入力）
-                data.get('reach', ''),
-                data.get('plays', ''),
-                data.get('likes', ''),
-                data.get('saves', ''),
-                data.get('comments', ''),
-                '',  # フォロワー増減（手動入力）
+
+        # 「▼ 以下に新しい投稿データを入力」行を探す
+        for i, row in enumerate(existing):
+            if '▼' in str(row[0]):
+                next_row = i + 2  # その行の下に挿入
+                break
+
+        written = 0
+        for p in posts:
+            # 重複チェック（同じ日付+内容があればスキップ）
+            is_dup = False
+            for row in existing:
+                if str(row[0]).replace('/', '-') == str(p.get('date', '')).replace('/', '-') and str(row[2]) == str(p.get('content', '')):
+                    is_dup = True
+                    break
+            if is_dup:
+                print(f'  ⏭️ 重複スキップ: {p.get("date")} {p.get("content", "")[:20]}')
+                continue
+
+            row_data = [
+                p.get('date', ''),
+                p.get('type', ''),
+                p.get('content', ''),
+                '',  # URL（スクショからは取得不可）
+                p.get('reach', 0),
+                p.get('plays', 0),
+                p.get('likes', 0),
+                p.get('saves', 0),
+                p.get('comments', 0),
+                0  # フォロワー増（個別投稿では不明）
             ]
-            ws.update(f'A{next_row}:J{next_row}', [row])
+            sheet.update(f'A{next_row}:J{next_row}', [row_data])
             next_row += 1
-            print(f"  ✅ 書き込み: {data.get('post_date', '')} - {data.get('caption_preview', '')[:20]}")
-        
-        print(f"\n✅ {len(post_data_list)}件の投稿データを書き込みました。")
-    
-    def write_monthly_insight(self, month_label, insight_data):
-        """月次インサイトをスプシに書き込み"""
+            written += 1
+
+        print(f'  ✅ {written}件の投稿を書き込みました')
+        return written
+
+    def write_account_insight(self, data):
+        """アカウントインサイトを②月次インサイトに書き込み"""
         ss = self.client.open_by_key(self.spreadsheet_id)
-        ws = ss.worksheet('② 月次インサイト')
-        
-        existing = ws.get_all_values()
-        next_row = len(existing) + 1
-        
-        row = [
-            month_label,
-            insight_data.get('period_start', ''),
-            insight_data.get('period_end', ''),
-            insight_data.get('impressions', ''),
-            insight_data.get('reach', ''),
-            insight_data.get('follower_inside_pct', ''),
-            insight_data.get('follower_outside_pct', ''),
-            insight_data.get('profile_visits', ''),
-            insight_data.get('external_link_taps', ''),
-            insight_data.get('follower_count', ''),
-            insight_data.get('age_top', ''),
-            insight_data.get('gender_ratio', ''),
+        sheet = ss.worksheet('② 月次インサイト')
+
+        month = data.get('month', '')
+        existing = sheet.get_all_values()
+
+        # 同じ月があれば上書き、なければ追加
+        target_row = len(existing) + 1
+        for i, row in enumerate(existing):
+            if str(row[0]).strip() == month:
+                target_row = i + 1
+                break
+
+        row_data = [
+            month,
+            '',  # クライアント名（後で設定）
+            '',  # 期間
+            data.get('impressions', 0),
+            data.get('reach', 0),
+            data.get('follower_reach_pct', 0),
+            data.get('non_follower_reach_pct', 0),
+            data.get('profile_visits', 0),
+            data.get('link_clicks', 0),
+            data.get('followers', 0)
         ]
-        ws.update(f'A{next_row}:L{next_row}', [row])
-        print(f"✅ 月次インサイト（{month_label}）を書き込みました。")
+        sheet.update(f'A{target_row}:J{target_row}', [row_data])
+        print(f'  ✅ アカウントインサイト書き込み: {month}')
 
 
 # ═══════════════════════════════════════════
@@ -320,110 +390,107 @@ class SheetsWriter:
 # ═══════════════════════════════════════════
 def main():
     config = load_config()
-    
-    print("=" * 50)
-    print("Instagram 自動データ取得")
-    print(f"クライアント: {config['client_name']}")
-    print("=" * 50)
-    
+
+    print('=' * 55)
+    print('  📸 Instagram インサイト自動取得')
+    print('     スクショ → Gemini Vision → スプシ書き込み')
+    print('=' * 55)
+
     # スクショ保存先
-    ss_dir = Path(config['screenshot_dir'])
+    ss_dir = Path(config.get('screenshot_dir', './screenshots'))
     ss_dir.mkdir(exist_ok=True)
-    
-    # ADB初期化
-    adb = ADBController(config['adb_path'])
-    if not adb.check_device():
-        return
-    
-    screen_w, screen_h = adb.get_screen_size()
-    print(f"📱 画面サイズ: {screen_w}x{screen_h}")
-    
-    # Gemini初期化
-    gemini = GeminiVision(config['gemini_api_key'], config['gemini_model'])
-    
-    # ── Step 1: Instagramを開く ──
-    print("\n📲 Instagramを起動中...")
-    adb.open_instagram()
-    time.sleep(config['wait_seconds'])
-    
-    # ── Step 2: インサイト画面に遷移 ──
-    print("\n📊 インサイト画面に遷移してください。")
-    print("   準備ができたらEnterキーを押してください。")
-    input("   >> ")
-    
-    # ── Step 3: アカウント全体のインサイトをスクショ ──
-    print("\n📸 アカウント全体のインサイトをスクショ中...")
-    account_ss = str(ss_dir / f"account_insight_{datetime.now():%Y%m%d_%H%M%S}.png")
-    if adb.screenshot(account_ss):
-        print(f"   保存: {account_ss}")
-        print("   🤖 AI読み取り中...")
-        account_data = gemini.extract_account_insights(account_ss)
-        if account_data:
-            print(f"   ✅ 読み取り成功")
-            try:
-                account_json = json.loads(account_data) if isinstance(account_data, str) else account_data
-                for k, v in account_json.items():
-                    print(f"      {k}: {v}")
-            except:
-                print(f"   ⚠️ JSON解析注意: {str(account_data)[:200]}")
-    
-    # ── Step 4: オーディエンスデータ ──
-    print("\n📸 オーディエンス画面を表示してください。")
-    input("   準備ができたらEnterキー >> ")
-    
-    audience_ss = str(ss_dir / f"audience_{datetime.now():%Y%m%d_%H%M%S}.png")
-    if adb.screenshot(audience_ss):
-        print(f"   保存: {audience_ss}")
-        print("   🤖 AI読み取り中...")
-        audience_data = gemini.extract_audience_data(audience_ss)
-        if audience_data:
-            print(f"   ✅ 読み取り成功")
-    
-    # ── Step 5: 各投稿のインサイト ──
-    print("\n📸 投稿一覧画面を表示してください。")
-    print("   各投稿のインサイトを1件ずつスクショしていきます。")
-    
-    post_data_list = []
-    while True:
-        print(f"\n--- 投稿 {len(post_data_list)+1} ---")
-        print("   投稿のインサイト画面を表示してEnterキー（終了は 'q'）")
-        user_input = input("   >> ").strip()
-        
-        if user_input.lower() == 'q':
-            break
-        
-        post_ss = str(ss_dir / f"post_{len(post_data_list)+1}_{datetime.now():%Y%m%d_%H%M%S}.png")
-        if adb.screenshot(post_ss):
-            print(f"   保存: {post_ss}")
-            print("   🤖 AI読み取り中...")
-            post_data = gemini.extract_post_insights(post_ss)
-            if post_data:
-                post_data_list.append(post_data)
-                print(f"   ✅ {post_data.get('post_type', '?')}: リーチ {post_data.get('reach', '?')}")
-    
-    # ── Step 6: スプシに書き込み ──
-    if post_data_list or account_data:
-        print("\n📝 スプシに書き込みますか？ (y/n)")
-        if input("   >> ").strip().lower() == 'y':
-            writer = SheetsWriter(config['spreadsheet_id'])
-            
-            if post_data_list:
-                writer.write_post_data(post_data_list)
-            
-            if account_data:
-                month_label = input("   対象月を入力（例: 2026年3月）>> ").strip()
-                if month_label:
-                    insight = json.loads(account_data) if isinstance(account_data, str) else account_data
-                    if audience_data:
-                        aud = json.loads(audience_data) if isinstance(audience_data, str) else audience_data
-                        insight.update(aud)
-                    writer.write_monthly_insight(month_label, insight)
-    
-    print("\n" + "=" * 50)
-    print("✅ 完了！")
-    print(f"   投稿数: {len(post_data_list)}件")
-    print(f"   スクショ: {ss_dir}")
-    print("=" * 50)
+
+    # デバイス検出
+    device_type = detect_device()
+    if not device_type:
+        print('\n❌ デバイスが見つかりません。')
+        print('   スマホをUSBでPCに接続してください。')
+        print('   iPhone: 「このコンピュータを信頼」をタップ')
+        print('   Android: USBデバッグを有効に')
+        sys.exit(1)
+
+    # デバイス接続
+    if device_type == 'iphone':
+        capture = IPhoneCapture()
+    else:
+        capture = AndroidCapture()
+
+    if not capture.connect():
+        sys.exit(1)
+
+    # キャプチャモード選択
+    print('\n取得モードを選択:')
+    print('  1. 投稿インサイト（投稿ごとのリーチ・いいね等）')
+    print('  2. アカウントインサイト（月次の全体数値）')
+    print('  3. 両方')
+    mode = input('>> ').strip()
+    if mode not in ['1', '2', '3']:
+        mode = '3'
+
+    capture_count = config.get('capture_count', 4)
+    interval = config.get('capture_interval', 3)
+
+    reader = GeminiVisionReader(config['gemini_api_key'], config.get('gemini_model', 'gemini-2.5-flash'))
+    writer = SheetWriter(config['spreadsheet_id'], config.get('service_account_file', 'service_account.json'))
+
+    # 投稿インサイト
+    if mode in ['1', '3']:
+        print(f'\n── 投稿インサイト取得 ──')
+        print(f'IGアプリで投稿一覧のインサイト画面を開いてください。')
+        input('準備できたらEnter >> ')
+
+        post_screenshots = []
+        for i in range(capture_count):
+            path = str(ss_dir / f'post_{i+1}.png')
+            if capture.screenshot(path):
+                post_screenshots.append(path)
+
+            if i < capture_count - 1:
+                if device_type == 'android':
+                    print(f'  📜 スクロール中...')
+                    capture.swipe_up()
+                else:
+                    print(f'  👆 画面をスクロールしてください（{interval}秒待機）')
+                    time.sleep(interval)
+
+        if post_screenshots:
+            posts = reader.read_insight(post_screenshots, 'post')
+            if posts and isinstance(posts, list):
+                print(f'  📊 {len(posts)}件の投稿を検出')
+                writer.write_posts(posts)
+            else:
+                print('  ⚠️ 投稿データの読み取りに失敗しました')
+
+    # アカウントインサイト
+    if mode in ['2', '3']:
+        print(f'\n── アカウントインサイト取得 ──')
+        print(f'IGアプリでアカウントの概要インサイト画面を開いてください。')
+        input('準備できたらEnter >> ')
+
+        acct_screenshots = []
+        for i in range(2):  # アカウント概要は2枚くらいでOK
+            path = str(ss_dir / f'account_{i+1}.png')
+            if capture.screenshot(path):
+                acct_screenshots.append(path)
+
+            if i == 0:
+                if device_type == 'android':
+                    capture.swipe_up()
+                else:
+                    print(f'  👆 画面をスクロールしてください（{interval}秒待機）')
+                    time.sleep(interval)
+
+        if acct_screenshots:
+            acct_data = reader.read_insight(acct_screenshots, 'account')
+            if acct_data and isinstance(acct_data, dict):
+                writer.write_account_insight(acct_data)
+            else:
+                print('  ⚠️ アカウントデータの読み取りに失敗しました')
+
+    print(f'\n{"=" * 55}')
+    print(f'  ✅ 完了！')
+    print(f'  スクショ: {ss_dir}')
+    print(f'{"=" * 55}')
 
 
 if __name__ == '__main__':
