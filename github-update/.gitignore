@@ -1,0 +1,13 @@
+service_account.json
+config.json
+config_minutes.json
+tmp_audio/
+screenshots/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+Thumbs.db
+.cache/
+config_android.json

@@ -1,0 +1,12 @@
+{
+  "device_ip": "192.168.1.XXX",
+  "device_port": 5555,
+  "adb_path": "adb",
+  "service_account_file": "service_account.json",
+  "drive_post_folder_id": "1S_hiDUja_Aq0FfacpAsmY82G95dXMa2t",
+  "drive_account_folder_id": "1kJ-Go0bwrF_CvHXMV1YTXFMrvQ1J5Dsj",
+  "screenshot_count_post": 3,
+  "screenshot_count_account": 4,
+  "scroll_pause": 2.0,
+  "scroll_distance": 800
+}
