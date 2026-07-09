@@ -17,6 +17,10 @@ on:
         description: 'Meeting date (e.g. 2026年5月14日)'
         required: false
         default: ''
+      folder_id:
+        description: 'Drive folder ID of 議事録 folder (falls back to DRIVE_FOLDER_ID secret)'
+        required: false
+        default: ''
 
 jobs:
   process:
@@ -66,4 +70,5 @@ jobs:
             --file-id "${{ github.event.inputs.file_id }}" \
             --file-name "${{ github.event.inputs.file_name }}" \
             --client-name "${{ github.event.inputs.client_name }}" \
-            --meeting-date "${{ github.event.inputs.meeting_date }}"
+            --meeting-date "${{ github.event.inputs.meeting_date }}" \
+            --folder-id "${{ github.event.inputs.folder_id }}"

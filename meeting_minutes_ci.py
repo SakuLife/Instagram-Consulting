@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--file-name', required=True)
     parser.add_argument('--client-name', default='')
     parser.add_argument('--meeting-date', default='')
+    parser.add_argument('--folder-id', default='')
     args = parser.parse_args()
 
     if not args.meeting_date:
@@ -44,7 +45,8 @@ def main():
     formatter = MinutesFormatter(config['gemini_api_key'], config.get('gemini_model', 'gemini-2.5-flash'))
     drive = DriveManager(config.get('service_account_file', 'service_account.json'))
 
-    parent_id = config['parent_folder_id']
+    # GASから議事録フォルダIDが渡されればそちらを優先（クライアントごとのフォルダに出力するため）
+    parent_id = args.folder_id or config['parent_folder_id']
     done_id = drive.find_subfolder(parent_id, config.get('subfolder_done', '処理済み'))
     txt_id = drive.find_subfolder(parent_id, config.get('subfolder_transcript', '文字起こし'))
     out_id = drive.find_subfolder(parent_id, config.get('subfolder_output', '出力'))

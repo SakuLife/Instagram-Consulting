@@ -13,7 +13,9 @@ var CONFIG = {
   SHEET_CONCEPT: '⑥ コンセプト設計',
   SHEET_LINE: '⑦ LINE分析',
   SHEET_LINE_REPORT: '⑧ LINEレポート',
-  LINE_DATA_START_ROW: 4
+  LINE_DATA_START_ROW: 4,
+  // 議事録処理用サービスアカウント（新規クライアントフォルダに自動で共有される）
+  SERVICE_ACCOUNT_EMAIL: 'speak-ig-tools@instagramanalysis-494222.iam.gserviceaccount.com'
 };
 
 var DEFAULT_FOLDERS = {
@@ -77,6 +79,7 @@ function onOpen() {
       .addItem('🔑 Gemini APIキーを設定', 'setApiKey')
       .addItem('📁 フォルダ設定を反映', 'configureFolders')
       .addItem('📊 グラフを作成/再作成', 'createAllCharts')
+      .addItem('🎨 シートの見た目を整える', 'beautifySheets')
       .addItem('🔍 APIキー動作テスト', 'testApiKey')
       .addItem('🚀 初期セットアップ（初回のみ）', 'initialSetup'))
     .addToUi();
@@ -94,6 +97,7 @@ function initialSetup() {
   refreshAllData();
   createAllCharts();
   setupConditionalFormatting_();
+  beautifySheets();
   ui.alert('✅ 初期セットアップ完了！');
 }
 
@@ -336,6 +340,73 @@ function createAllCharts() {
   ss.toast('グラフ4種を作成しました', '✅');
 }
 
+// ═══ シート整形（見た目の完成度を上げる一括処理） ═══
+function beautifySheets() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ss.toast('シートを整形中...', '🎨');
+
+  // ① 投稿管理: 列幅・書式・プルダウン・ヘッダー固定
+  var p = ss.getSheetByName(CONFIG.SHEET_POST);
+  if (p) {
+    p.setFrozenRows(3);
+    var w1 = [95, 110, 320, 180, 90, 90, 80, 80, 90, 110];
+    for (var i1 = 0; i1 < w1.length; i1++) p.setColumnWidth(i1 + 1, w1[i1]);
+    p.getRange('A4:A500').setNumberFormat('yyyy/mm/dd').setHorizontalAlignment('center');
+    p.getRange('E4:J500').setNumberFormat('#,##0').setHorizontalAlignment('center');
+    p.getRange('B4:B500').setHorizontalAlignment('center').setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(['リール', 'フィード', 'ストーリーズ'], true).setAllowInvalid(true).build());
+    p.getRange('A4:J500').setVerticalAlignment('middle');
+  }
+
+  // ② 月次インサイト: 書式・ヘッダー固定
+  var ins = ss.getSheetByName(CONFIG.SHEET_INSIGHT);
+  if (ins) {
+    ins.setFrozenRows(3);
+    ins.getRange('D4:E50').setNumberFormat('#,##0');
+    ins.getRange('F4:G50').setNumberFormat('0.0"%"');
+    ins.getRange('H4:J50').setNumberFormat('#,##0');
+    ins.getRange('A4:L50').setVerticalAlignment('middle').setHorizontalAlignment('center');
+  }
+
+  // ③ 自動集計: 作業用エリアを目立たなくする
+  var calc = ss.getSheetByName(CONFIG.SHEET_CALC);
+  if (calc) {
+    calc.hideRows(4); // 集計用の年・月セル（スクリプトからは引き続き使える）
+    // グラフ用データ（行79〜97）は非表示にするとグラフが消えるため、薄いグレーで控えめに
+    calc.getRange('A79:H97').setFontColor('#C0C4CC').setFontSize(8);
+    calc.getRange('A79').setValue('▼ グラフ用データ（編集しないでください）');
+  }
+
+  // ④ 考察・コメント: 折り返し・上寄せ
+  var cm = ss.getSheetByName(CONFIG.SHEET_COMMENT);
+  if (cm) {
+    cm.getRange('A6:L25').setWrap(true).setVerticalAlignment('top');
+  }
+
+  // ⑦ LINE分析: ヘッダー・書式・AI考察エリアを整備
+  var line = ss.getSheetByName(CONFIG.SHEET_LINE);
+  if (line) {
+    line.setFrozenRows(3);
+    var w7 = [110, 100, 130, 100, 100, 100, 100, 100, 100, 120, 130];
+    for (var i7 = 0; i7 < w7.length; i7++) line.setColumnWidth(i7 + 1, w7[i7]);
+    line.getRange(3, 1, 1, 11).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#1B2A4A')
+      .setHorizontalAlignment('center').setVerticalAlignment('middle').setWrap(true);
+    line.getRange(4, 1, 14, 11).setNumberFormat('#,##0').setHorizontalAlignment('center').setVerticalAlignment('middle');
+    line.getRange(4, 1, 14, 1).setNumberFormat('@'); // 対象月は文字列のまま
+    // AI考察エリア（見出し＋結合した記入ブロック）
+    line.getRange('A18').setValue('■ AI考察（自動生成）').setFontWeight('bold').setFontColor('#E8734A');
+    line.getRange('A19').setValue('📈 傾向と分析').setFontWeight('bold');
+    line.getRange('A23').setValue('⚠️ 改善ポイント').setFontWeight('bold');
+    try { line.getRange('A20:K22').merge(); } catch (e1) {}
+    try { line.getRange('A24:K26').merge(); } catch (e2) {}
+    line.getRange('A20:K22').setBackground('#EBF5FF').setWrap(true).setVerticalAlignment('top');
+    line.getRange('A24:K26').setBackground('#FFF0EB').setWrap(true).setVerticalAlignment('top');
+  }
+
+  setupConditionalFormatting_();
+  ss.toast('シート整形が完了しました', '✅');
+}
+
 function setupConditionalFormatting_() {
   var s = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.SHEET_CALC);
   s.clearConditionalFormatRules();
@@ -473,6 +544,10 @@ function copyTemplate() {
   minFolder.createFolder('文字起こし');
   minFolder.createFolder('出力');
 
+  // 議事録処理用サービスアカウントにフォルダを共有（これがないと新環境で議事録が動かない）
+  try { projFolder.addEditor(CONFIG.SERVICE_ACCOUNT_EMAIL); }
+  catch (e) { Logger.log('SA共有スキップ: ' + e.message); }
+
   // ガイド類（プロジェクト直下のファイル）もコピー
   // スプシは別途データを空にしてコピーするため除外
   var srcFiles = srcFolder.getFiles();
@@ -544,6 +619,7 @@ function buildReportSheet_() {
   var clientName = getClientName_() || '（クライアント名未設定）';
 
   rpt.clear();
+  rpt.setHiddenGridlines(true);
   var colW = [28, 154, 154, 154, 154, 154, 154, 28];
   for (var cw = 0; cw < colW.length; cw++) rpt.setColumnWidth(cw + 1, colW[cw]);
   var r = 1;
@@ -849,6 +925,7 @@ function buildLineReportSheet_() {
   var rpt = ss.getSheetByName(CONFIG.SHEET_LINE_REPORT);
   if (!rpt) rpt = ss.insertSheet(CONFIG.SHEET_LINE_REPORT);
   rpt.clear();
+  rpt.setHiddenGridlines(true);
   var colW = [28, 130, 110, 110, 110, 110, 110, 110, 28];
   for (var cw = 0; cw < colW.length; cw++) rpt.setColumnWidth(cw + 1, colW[cw]);
   var r = 1;
@@ -979,7 +1056,7 @@ function processMinutes() {
     var r = UrlFetchApp.fetch(url, {
       method: 'post', contentType: 'application/json',
       headers: { 'Authorization': 'Bearer ' + ghToken, 'Accept': 'application/vnd.github.v3+json' },
-      payload: JSON.stringify({ ref: 'main', inputs: { file_id: sel.id, file_name: sel.name, client_name: cn, meeting_date: md } }),
+      payload: JSON.stringify({ ref: 'main', inputs: { file_id: sel.id, file_name: sel.name, client_name: cn, meeting_date: md, folder_id: getFolderId_('minutes') } }),
       muteHttpExceptions: true
     });
     if (r.getResponseCode() === 204) { ui.alert('✅ 議事録処理を開始！\n\n完了まで10〜15分。'); }
