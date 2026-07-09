@@ -21,6 +21,14 @@ on:
         description: 'Drive folder ID of 議事録 folder (falls back to DRIVE_FOLDER_ID secret)'
         required: false
         default: ''
+      transcript_file_id:
+        description: 'Pre-created empty txt file ID for transcript (SA has no storage quota)'
+        required: false
+        default: ''
+      minutes_file_id:
+        description: 'Pre-created empty txt file ID for minutes (SA has no storage quota)'
+        required: false
+        default: ''
 
 concurrency:
   group: minutes-${{ github.event.inputs.file_id }}
@@ -75,4 +83,6 @@ jobs:
             --file-name "${{ github.event.inputs.file_name }}" \
             --client-name "${{ github.event.inputs.client_name }}" \
             --meeting-date "${{ github.event.inputs.meeting_date }}" \
-            --folder-id "${{ github.event.inputs.folder_id }}"
+            --folder-id "${{ github.event.inputs.folder_id }}" \
+            --transcript-file-id "${{ github.event.inputs.transcript_file_id }}" \
+            --minutes-file-id "${{ github.event.inputs.minutes_file_id }}"

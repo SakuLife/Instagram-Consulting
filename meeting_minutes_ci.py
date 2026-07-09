@@ -22,6 +22,8 @@ def main():
     parser.add_argument('--client-name', default='')
     parser.add_argument('--meeting-date', default='')
     parser.add_argument('--folder-id', default='')
+    parser.add_argument('--transcript-file-id', default='')
+    parser.add_argument('--minutes-file-id', default='')
     args = parser.parse_args()
 
     if not args.meeting_date:
@@ -75,7 +77,11 @@ def main():
         doc_prefix = f'{args.meeting_date}_{args.client_name}'
 
     # 文字起こし保存
-    drive.upload_as_doc(f'{doc_prefix}_文字起こし', transcript, txt_id)
+    # SAはストレージ容量を持たないため、GASが作成した空ファイルの更新を優先する
+    if args.transcript_file_id:
+        drive.update_text_file(args.transcript_file_id, transcript)
+    else:
+        drive.upload_as_doc(f'{doc_prefix}_文字起こし', transcript, txt_id)
     print(f'  💾 文字起こし保存')
 
     # 議事録整理
@@ -85,7 +91,10 @@ def main():
         sys.exit(0)
 
     # 議事録保存
-    result = drive.upload_as_doc(f'{doc_prefix}_議事録', minutes, out_id)
+    if args.minutes_file_id:
+        result = drive.update_text_file(args.minutes_file_id, minutes)
+    else:
+        result = drive.upload_as_doc(f'{doc_prefix}_議事録', minutes, out_id)
     print(f'  ✅ 議事録保存: {doc_prefix}_議事録')
     print(f'     URL: {result.get("webViewLink", "")}')
 

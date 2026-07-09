@@ -250,6 +250,17 @@ class DriveManager:
                 print(f'  (通信エラーのためリトライ {attempt + 1}/{retries}、{wait}秒待機: {e})')
                 time.sleep(wait)
 
+    def update_text_file(self, file_id, content):
+        """既存のテキストファイルの中身を書き換える。
+        サービスアカウントはストレージ容量を持たない（新規ファイルを所有できない）ため、
+        GAS側でユーザー名義の空ファイルを作成し、こちらでは更新のみ行う。"""
+        from googleapiclient.http import MediaInMemoryUpload
+        return self._execute_with_retry(lambda: self.service.files().update(
+            fileId=file_id,
+            media_body=MediaInMemoryUpload(content.encode('utf-8'), mimetype='text/plain'),
+            fields='id,webViewLink'
+        ))
+
     def upload_as_doc(self, name, content, folder_id):
         """テキストファイルをDriveにアップロード（ストレージ節約のためtxt形式）"""
         from googleapiclient.http import MediaInMemoryUpload
