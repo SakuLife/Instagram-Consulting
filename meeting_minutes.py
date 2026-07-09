@@ -237,6 +237,19 @@ class DriveManager:
                     print(f'     ダウンロード: {int(status.progress() * 100)}%', end='\r')
         print()
 
+    def _execute_with_retry(self, build_request, retries=3):
+        """一時的な通信エラー（SSL切断等）に備えてリトライ付きでAPIを実行する"""
+        import time
+        for attempt in range(retries + 1):
+            try:
+                return build_request().execute()
+            except Exception as e:
+                if attempt >= retries:
+                    raise
+                wait = 10 * (attempt + 1)
+                print(f'  (通信エラーのためリトライ {attempt + 1}/{retries}、{wait}秒待機: {e})')
+                time.sleep(wait)
+
     def upload_as_doc(self, name, content, folder_id):
         """テキストファイルをDriveにアップロード（ストレージ節約のためtxt形式）"""
         from googleapiclient.http import MediaInMemoryUpload
@@ -244,10 +257,11 @@ class DriveManager:
             'name': name + '.txt',
             'parents': [folder_id]
         }
-        media = MediaInMemoryUpload(content.encode('utf-8'), mimetype='text/plain')
-        file = self.service.files().create(
-            body=metadata, media_body=media, fields='id,webViewLink'
-        ).execute()
+        file = self._execute_with_retry(lambda: self.service.files().create(
+            body=metadata,
+            media_body=MediaInMemoryUpload(content.encode('utf-8'), mimetype='text/plain'),
+            fields='id,webViewLink'
+        ))
 
         # フォルダオーナーに編集権限を付与
         try:
@@ -265,9 +279,10 @@ class DriveManager:
         return file
 
     def move_file(self, file_id, new_folder_id):
-        file = self.service.files().get(fileId=file_id, fields='parents').execute()
+        file = self._execute_with_retry(lambda: self.service.files().get(fileId=file_id, fields='parents'))
         old_parents = ','.join(file.get('parents', []))
-        self.service.files().update(fileId=file_id, addParents=new_folder_id, removeParents=old_parents, fields='id').execute()
+        self._execute_with_retry(lambda: self.service.files().update(
+            fileId=file_id, addParents=new_folder_id, removeParents=old_parents, fields='id'))
 
 
 def main():
