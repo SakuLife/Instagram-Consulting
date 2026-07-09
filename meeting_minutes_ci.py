@@ -87,8 +87,14 @@ def main():
     # 議事録整理
     minutes = formatter.format_minutes(transcript, args.client_name, args.meeting_date)
     if not minutes:
-        print('⚠️ 議事録整理失敗。文字起こしのみ保存。')
-        sys.exit(0)
+        # 失敗を成功扱い(exit 0)にすると気づけないため、明示的に失敗させる
+        print('⚠️ 議事録整理失敗。文字起こしは保存済み。')
+        if args.minutes_file_id:
+            drive.update_text_file(
+                args.minutes_file_id,
+                '（議事録の自動整理に失敗しました。文字起こしファイルは「文字起こし」フォルダに保存されています。'
+                'もう一度「議事録を処理」を実行してください）')
+        sys.exit(1)
 
     # 議事録保存
     if args.minutes_file_id:
