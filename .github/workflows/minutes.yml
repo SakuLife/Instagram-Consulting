@@ -22,10 +22,14 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: minutes-${{ github.event.inputs.file_id }}
+  cancel-in-progress: false
+
 jobs:
   process:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
