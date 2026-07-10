@@ -289,11 +289,15 @@ class DriveManager:
 
         return file
 
-    def move_file(self, file_id, new_folder_id):
-        file = self._execute_with_retry(lambda: self.service.files().get(fileId=file_id, fields='parents'))
-        old_parents = ','.join(file.get('parents', []))
+    def move_file(self, file_id, new_folder_id, old_parent_id=''):
+        """ファイルを別フォルダへ移動。
+        SAからは親フォルダ情報(parents)が見えないことがあるため、
+        呼び出し側が移動元フォルダIDを明示できるようにする。"""
+        if not old_parent_id:
+            file = self._execute_with_retry(lambda: self.service.files().get(fileId=file_id, fields='parents'))
+            old_parent_id = ','.join(file.get('parents', []))
         self._execute_with_retry(lambda: self.service.files().update(
-            fileId=file_id, addParents=new_folder_id, removeParents=old_parents, fields='id'))
+            fileId=file_id, addParents=new_folder_id, removeParents=old_parent_id, fields='id'))
 
 
 def main():

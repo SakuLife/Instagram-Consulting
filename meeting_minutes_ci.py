@@ -104,9 +104,13 @@ def main():
     print(f'  ✅ 議事録保存: {doc_prefix}_議事録')
     print(f'     URL: {result.get("webViewLink", "")}')
 
-    # 録音を処理済みに移動
-    drive.move_file(args.file_id, done_id)
-    print('  📦 録音を処理済みに移動')
+    # 録音を処理済みに移動（失敗しても議事録は完成しているため処理は止めない）
+    try:
+        rec_id = drive.find_subfolder(parent_id, config.get('subfolder_recording', '録音'))
+        drive.move_file(args.file_id, done_id, rec_id or '')
+        print('  📦 録音を処理済みに移動')
+    except Exception as e:
+        print(f'  ⚠️ 録音の移動に失敗しました（議事録は完成済み）。「録音」フォルダから手動で移動してください: {e}')
 
     # クリーンアップ
     try: os.remove(local_path)
