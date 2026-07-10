@@ -1072,7 +1072,10 @@ function processMinutes() {
       muteHttpExceptions: true
     });
     if (r.getResponseCode() === 204) {
-      ui.alert('✅ 議事録処理を開始！\n\n完了まで15〜40分ほどかかります。\n「文字起こし」「出力」フォルダに作成された（処理中）ファイルが、完了すると自動で書き換わります。');
+      // 録音の移動はSA権限では不可のため、所有者であるGAS側で行う（IDは変わらないので処理に影響なし）
+      try { DriveApp.getFileById(sel.id).moveTo(getOrCreateSub_(folder, '処理済み')); }
+      catch (eMove) { Logger.log('録音移動スキップ: ' + eMove.message); }
+      ui.alert('✅ 議事録処理を開始！\n\n完了まで15〜40分ほどかかります。\n「文字起こし」「出力」フォルダに作成された（処理中）ファイルが、完了すると自動で書き換わります。\n録音ファイルは「処理済み」フォルダに移動しました。');
     } else {
       tFile.setTrashed(true); mFile.setTrashed(true);
       ui.alert('❌ 起動失敗（' + r.getResponseCode() + '）\n\n' + r.getContentText().substring(0, 500));
