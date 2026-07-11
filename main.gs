@@ -340,6 +340,77 @@ function createAllCharts() {
   ss.toast('グラフ4種を作成しました', '✅');
 }
 
+// ═══ 納品前セットアップ（使い捨て・エディタから1回だけ実行する） ═══
+// main.gs貼り替え後、エディタ上部の関数選択で applyDeliverySetup を選んで「実行」。
+// APIキー設定・Drive掃除・テストデータ削除・シート整形をまとめて行う。実行後この関数は削除してよい。
+function applyDeliverySetup() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var logs = [];
+
+  // 1. Gemini APIキーを一時ファイルから読み込んで設定（ファイルは読み込み後ゴミ箱へ）
+  try {
+    var kf = DriveApp.getFileById('13NIxrg5QtqUZHLBBzNXzTZ8LDHF55ehm');
+    var key = kf.getBlob().getDataAsString('UTF-8').trim();
+    if (key.indexOf('AIza') === 0) {
+      PropertiesService.getScriptProperties().setProperty('GEMINI_API_KEY', key);
+      logs.push('OK: Gemini APIキーを設定しました');
+    }
+    kf.setTrashed(true);
+  } catch (e1) { logs.push('SKIP: APIキー設定（' + e1.message + '）→ 🔑メニューから手動設定してください'); }
+
+  // 2. 旧SETUP_GUIDE（7/9朝アップの重複分）をゴミ箱へ
+  try {
+    DriveApp.getFileById('14JXmHVmVL9JrZ5AzQLvQuGWOfqalppaJwgcBBA3TeCQ').setTrashed(true);
+    logs.push('OK: 旧SETUP_GUIDEを削除しました');
+  } catch (e2) { logs.push('SKIP: 旧SETUP_GUIDE削除（' + e2.message + '）'); }
+
+  // 3. 動作テスト用ファイルをゴミ箱へ
+  var testIds = ['1TovnkvaBnZ4ljISf4-6foXwK1XBoKewY', '13YRfMCFLLqOmlhbIh6hHIlvYvUqg_STU'];
+  for (var t = 0; t < testIds.length; t++) {
+    try { DriveApp.getFileById(testIds[t]).setTrashed(true); } catch (e3) {}
+  }
+  logs.push('OK: 動作テストファイルを削除しました');
+
+  // 4. IG管理_bib（テスト用の不要スプシ）をゴミ箱へ
+  try {
+    var bibs = DriveApp.getFolderById(getFolderId_('project')).getFilesByName('IG管理_bib');
+    while (bibs.hasNext()) { bibs.next().setTrashed(true); logs.push('OK: IG管理_bibを削除しました'); }
+  } catch (e4) {}
+
+  // 5. 録音フォルダに残っているファイルを処理済みへ移動
+  try {
+    var minFolder = DriveApp.getFolderById(getFolderId_('minutes'));
+    var recs = getOrCreateSub_(minFolder, '録音').getFiles();
+    var done = getOrCreateSub_(minFolder, '処理済み');
+    var moved = 0;
+    while (recs.hasNext()) { recs.next().moveTo(done); moved++; }
+    if (moved > 0) logs.push('OK: 録音' + moved + '件を処理済みへ移動しました');
+  } catch (e5) { logs.push('SKIP: 録音移動（' + e5.message + '）'); }
+
+  // 6. テストデータ行の削除（①のExcel時短テク行・②の2026年5月行）
+  try {
+    var p = ss.getSheetByName(CONFIG.SHEET_POST);
+    var pv = p.getRange('A4:C500').getValues();
+    for (var r6 = pv.length - 1; r6 >= 0; r6--) {
+      if (String(pv[r6][2]).indexOf('一度作れば一生使える') >= 0) p.deleteRow(r6 + 4);
+    }
+    var ins6 = ss.getSheetByName(CONFIG.SHEET_INSIGHT);
+    var iv = ins6.getRange('A4:A50').getValues();
+    for (var r7 = iv.length - 1; r7 >= 0; r7--) {
+      if (String(iv[r7][0]).trim() === '2026年5月') ins6.deleteRow(r7 + 4);
+    }
+    logs.push('OK: テストデータ行を削除しました');
+  } catch (e6) { logs.push('SKIP: テストデータ削除（' + e6.message + '）'); }
+
+  // 7. シート整形
+  try { beautifySheets(); logs.push('OK: シート整形を実行しました'); }
+  catch (e7) { logs.push('SKIP: シート整形（' + e7.message + '）'); }
+
+  Logger.log(logs.join('\n'));
+  try { SpreadsheetApp.getUi().alert('納品前セットアップ完了\n\n' + logs.join('\n')); } catch (e8) {}
+}
+
+
 // ═══ シート整形（見た目の完成度を上げる一括処理） ═══
 function beautifySheets() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
