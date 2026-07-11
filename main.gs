@@ -427,6 +427,16 @@ function beautifySheets() {
     p.getRange('B4:B500').setHorizontalAlignment('center').setDataValidation(
       SpreadsheetApp.newDataValidation().requireValueInList(['リール', 'フィード', 'ストーリーズ'], true).setAllowInvalid(true).build());
     p.getRange('A4:J500').setVerticalAlignment('middle');
+    // 種別の色は静的な塗りをやめて条件付き書式に統一（空セルに色が残らないように）
+    p.getRange('A4:J500').setBackground(null);
+    var typeColors = [['リール', '#E3F2FD'], ['フィード', '#FFF3E0'], ['ストーリーズ', '#FCE4EC']];
+    var pRules = [];
+    for (var tc2 = 0; tc2 < typeColors.length; tc2++) {
+      pRules.push(SpreadsheetApp.newConditionalFormatRule()
+        .whenTextEqualTo(typeColors[tc2][0]).setBackground(typeColors[tc2][1])
+        .setRanges([p.getRange('B4:B500')]).build());
+    }
+    p.setConditionalFormatRules(pRules);
   }
 
   // ② 月次インサイト: 書式・ヘッダー固定
@@ -637,9 +647,9 @@ function copyTemplate() {
 
   // データクリア
   var p = nss.getSheetByName(CONFIG.SHEET_POST);
-  if (p && p.getLastRow() >= 4) p.getRange(4, 1, p.getLastRow() - 3, 10).clearContent();
+  if (p && p.getLastRow() >= 4) p.getRange(4, 1, p.getLastRow() - 3, 10).clearContent().setBackground(null);
   var ins = nss.getSheetByName(CONFIG.SHEET_INSIGHT);
-  if (ins && ins.getLastRow() >= 4) ins.getRange(4, 1, ins.getLastRow() - 3, 12).clearContent();
+  if (ins && ins.getLastRow() >= 4) ins.getRange(4, 1, ins.getLastRow() - 3, 12).clearContent().setBackground(null);
   var calc = nss.getSheetByName(CONFIG.SHEET_CALC);
   if (calc) { calc.getRange('A6:H6').clearContent(); calc.getRange('B11:F17').clearContent(); calc.getRange('B21:F23').clearContent(); calc.getRange('B27:H29').clearContent(); calc.getRange('B33:D39').clearContent(); }
   var cm = nss.getSheetByName(CONFIG.SHEET_COMMENT);
